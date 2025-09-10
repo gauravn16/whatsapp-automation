@@ -1,3 +1,4 @@
+require("dotenv").config();
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
 const axios = require("axios");
@@ -19,8 +20,8 @@ client.on("ready", async () => {
 
   try {
     const loginResult = await axios.post('https://m.sampark369.org/v1/auth/user/login', {
-        userName: "8446699127",
-      passCode: "3600"
+        userName: process.env.USER_NAME,
+      passCode: process.env.PASS_CODE
     });
     const authToken = loginResult.data.result.token;
     const response = await axios.get(BIRTHDAY_API, {
@@ -53,7 +54,7 @@ client.on("ready", async () => {
       console.log("❌ Group not found. Check GROUP_NAME.");
     }
 
-    const verifyResult = await axios.get(`https://m.sampark369.org/v1/auth/8446699127/verify`);
+    const verifyResult = await axios.get(`https://m.sampark369.org/v1/auth/${process.env.USER_NAME}/verify`);
     console.log("logout done", verifyResult.data);
   } catch (err) {
     console.error("❌ Error fetching/sending birthdays:", err.message);
