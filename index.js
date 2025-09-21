@@ -1,86 +1,104 @@
 require("dotenv").config();
-const { default: makeWASocket, useMultiFileAuthState } = require("@adiwajshing/baileys");
-const qrcode = require("qrcode-terminal");
+const makeWASocket = require("@whiskeysockets/baileys").default;
+const { useMultiFileAuthState } = require("@whiskeysockets/baileys");
+const { Boom } = require("@hapi/boom");
 const axios = require("axios");
 const cron = require("node-cron");
+const qrcode = require("qrcode-terminal");
 
-const GROUP_NAME = "My swadhyay";
 const BIRTHDAY_API = "https://m.sampark369.org/v1/sam2api/member/birthdays";
 
-// Function to fetch birthdays and send WhatsApp message
-async function sendBirthdayMessage(sock) {
-  try {
-    // Login to your API
-    const loginResult = await axios.post("https://m.sampark369.org/v1/auth/user/login", {
+async function fetchBirthdays() {
+  const loginResp = await axios.post(
+    "https://m.sampark369.org/v1/auth/user/login",
+    {
       userName: process.env.API_USER_NAME,
       passCode: process.env.API_PASS_CODE,
-    });
-
-    const authToken = loginResult.data.result.token;
-    const response = await axios.get(BIRTHDAY_API, {
-      headers: {
-        token: authToken,
-        "Content-Type": "application/json",
-      },
-    });
-    const birthdays = response.data.data || [];
-
-    // Prepare message
-    let message = "";
-    if (birthdays.length === 0) {
-      message = "🎂 No birthdays today 🙏";
-    } else {
-      message = "🎂 Today's Birthdays 🎂\n\n";
-      birthdays.forEach((p) => {
-        message += `- ${p.firstName} ${p.lastName} (${p.mobile}, lastSabha: ${p.lastSabha})\n`;
-      });
-      message += "\nLet's wish them 🙏";
     }
+  );
 
-    // Get all groups
-    const groups = await sock.groupFetchAllParticipating();
-    const group = Object.values(groups).find((g) => g.subject === GROUP_NAME);
+  const token = loginResp.data?.result?.token;
+  const resp = await axios.get(BIRTHDAY_API, {
+    headers: { token },
+  });
 
-    if (group) {
-      await sock.sendMessage(group.id, { text: message });
-      console.log("✅ Birthday message sent to group!");
-    } else {
-      console.log("❌ Group not found. Check GROUP_NAME.");
-    }
-  } catch (err) {
-    console.error("❌ Error fetching/sending birthdays:", err.message);
-  }
+  return resp.data?.data || [];
 }
 
-// Start WhatsApp client with Baileys
+function formatMessage(birthdays) {
+  if (!birthdays.length) return "🎂 No birthdays today 🙏";
+  let msg = "🎂 Today's Birthdays 🎂\n\n";
+  msg += birthdays
+    .map(
+      (p) =>
+        `- ${p.firstName} ${p.lastName} (📱${p.mobile}, lastSabha: ${p.lastSabha})`
+    )
+    .join("\n");
+  return msg + "\n\nLet's wish them 🙏";
+}
+
 async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState("auth");
+  const { state, saveCreds } = await useMultiFileAuthState("auth_info");
+
   const sock = makeWASocket({
     auth: state,
-    printQRInTerminal: true, // QR will show in Termux
+    printQRInTerminal: true, // shows QR in terminal
   });
 
   sock.ev.on("creds.update", saveCreds);
 
   sock.ev.on("connection.update", (update) => {
-    const { connection } = update;
-    if (connection === "open") {
-      console.log("✅ WhatsApp bot is ready!");
+    const { connection, lastDisconnect, qr } = update;
+    if (qr) qrcode.generate(qr, { small: true });
 
-      // Run immediately once
-      sendBirthdayMessage(sock);
-
-      // Schedule daily at 6:00 AM IST
-      cron.schedule(
-        "0 6 * * *",
-        async () => {
-          console.log("⏰ Running daily birthday job...");
-          await sendBirthdayMessage(sock);
-        },
-        { timezone: "Asia/Kolkata" }
-      );
+    if (connection === "close") {
+      const shouldReconnect =
+        (lastDisconnect.error = new Boom(lastDisconnect.error)?.output?.statusCode !==
+        401);
+      console.log("connection closed, reconnect:", shouldReconnect);
+      if (shouldReconnect) startBot();
+    } else if (connection === "open") {
+      console.log("✅ WhatsApp bot connected!");
+      scheduleBirthdayJob(sock);
     }
   });
+}
+
+function scheduleBirthdayJob(sock) {
+  // run immediately (for testing)
+  sendBirthdayMessage(sock);
+
+  // schedule daily 6 AM IST
+  cron.schedule(
+    "0 6 * * *",
+    () => {
+      console.log("⏰ Sending daily birthday message...");
+      sendBirthdayMessage(sock);
+    },
+    { timezone: "Asia/Kolkata" }
+  );
+}
+
+async function sendBirthdayMessage(sock) {
+  try {
+    const birthdays = await fetchBirthdays();
+    const msg = formatMessage(birthdays);
+
+    // find group by name
+    const groups = await sock.groupFetchAllParticipating();
+    const group = Object.values(groups).find(
+      (g) => g.subject === "My swadhyay"
+    );
+
+    if (group) {
+      await sock.sendMessage(group.id, { text: msg });
+      console.log("✅ Birthday message sent!");
+    } else {
+      console.log("❌ Group not found:", process.env.GROUP_NAME);
+    }
+  } catch (err) {
+    console.error("❌ Error:", err.message);
+  }
 }
 
 startBot();
