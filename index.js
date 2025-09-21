@@ -8,7 +8,8 @@ const GROUP_NAME = "My swadhyay";
 const BIRTHDAY_API = "https://m.sampark369.org/v1/sam2api/member/birthdays";
 
 const client = new Client({
-  authStrategy: new LocalAuth() // keeps you logged in after first QR scan
+  authStrategy: new LocalAuth(), // keeps you logged in after first QR scan
+  puppeteer: { executablePath: "echo" } // trick to bypass puppeteer
 });
 
 client.on("qr", (qr) => {
